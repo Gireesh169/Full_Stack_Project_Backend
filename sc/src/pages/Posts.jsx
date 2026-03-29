@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'react-toastify'
-import { createPost, getPostsByCategory, getPostsByLocation, getPostsFeed, likePost } from '../api/cityPostApi'
+import { getPostsByCategory, getPostsByLocation, getPostsFeed, likePost } from '../api/cityPostApi'
+import CreateCityPost from '../components/CreateCityPost'
 import Loader from '../components/Loader'
-import PostModal from '../components/PostModal'
 import { useAuth } from '../context/AuthContext'
 import { formatDateTime } from '../utils/date'
 
@@ -80,17 +80,6 @@ const Posts = () => {
     }
   }
 
-  const handleCreate = async (payload) => {
-    try {
-      await createPost(user.id, payload)
-      toast.success('Post created successfully')
-      setShowModal(false)
-      fetchFeed()
-    } catch {
-      toast.error('Unable to create post')
-    }
-  }
-
   const sortedPosts = useMemo(
     () => [...posts].sort((a, b) => new Date(b.postedAt) - new Date(a.postedAt)),
     [posts],
@@ -98,7 +87,7 @@ const Posts = () => {
 
   return (
     <section className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-black text-slate-900 sm:text-3xl">City Posts Feed</h1>
         <button
           type="button"
@@ -139,32 +128,97 @@ const Posts = () => {
       {loading ? (
         <Loader label="Loading city posts..." />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
           {sortedPosts.map((post) => (
-            <article key={post.id} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="mb-3 inline-block rounded-full bg-teal-100 px-3 py-1 text-xs font-bold text-teal-700">
-                {post.category}
-              </p>
-              <h3 className="text-lg font-bold text-slate-900">{post.title}</h3>
-              <p className="mt-2 text-sm text-slate-600">{post.description}</p>
-              <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{post.location}</p>
-              <p className="mt-1 text-xs text-slate-500">{formatDateTime(post.postedAt)}</p>
-              <div className="mt-4 flex items-center justify-between">
-                <span className="text-sm font-semibold text-slate-700">Likes: {post.likesCount ?? 0}</span>
+            <article
+              key={post.id}
+              className="overflow-hidden rounded-xl bg-white shadow-md transition duration-300 hover:scale-105 hover:shadow-xl"
+            >
+              <div className="relative">
+                {console.log('IMAGE URL:', post?.imageUrl)}
+                {(() => {
+                  const rawImageUrl = typeof post?.imageUrl === 'string' ? post.imageUrl.trim() : ''
+                  let imageSrc = ''
+
+                  if (rawImageUrl.startsWith('http')) {
+                    try {
+                      const parsedUrl = new URL(rawImageUrl)
+                      if (parsedUrl.hostname === 'localhost') {
+                        parsedUrl.port = '8086'
+                        imageSrc = parsedUrl.toString()
+                      } else {
+                        imageSrc = rawImageUrl
+                      }
+                    } catch {
+                      imageSrc = rawImageUrl
+                    }
+                  } else {
+                    imageSrc = `http://localhost:8086/${rawImageUrl.replace(/^\/+/, '')}`
+                  }
+
+                  console.log('IMAGE:', imageSrc)
+
+                  return rawImageUrl ? (
+                    <img
+                      src={imageSrc}
+                      alt="post"
+                      style={{ width: '100%', height: '220px', objectFit: 'cover' }}
+                      className="rounded-t-xl"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null
+                        e.currentTarget.src = 'https://via.placeholder.com/300x200?text=No+Image'
+                      }}
+                    />
+                  ) : (
+                    <img
+                      src="https://via.placeholder.com/300x200?text=No+Image"
+                      alt="No image"
+                      style={{ width: '100%', height: '220px', objectFit: 'cover' }}
+                      className="rounded-t-xl"
+                    />
+                  )
+                })()}
+                <span className="absolute left-3 top-3 rounded-full bg-black/70 px-3 py-1 text-xs font-bold text-white">
+                  {post.category}
+                </span>
+              </div>
+
+              <div className="p-4">
+                <h3 className="text-lg font-bold text-slate-900">{post.title}</h3>
+                <p className="mt-2 min-h-12 text-sm text-slate-600">{(post.description ?? '').slice(0, 120)}{(post.description ?? '').length > 120 ? '...' : ''}</p>
+                <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">{post.location}</p>
+                <p className="mt-1 text-xs text-slate-500">{formatDateTime(post.postedAt)}</p>
+
+                <div className="mt-4 flex items-center justify-between">
+                  <span className="text-sm font-semibold text-slate-700">Likes: {post.likesCount ?? 0}</span>
                 <button
                   type="button"
                   onClick={() => handleLike(post.id)}
-                  className="rounded-lg bg-slate-900 px-3 py-1 text-sm font-semibold text-white"
+                  className="rounded-lg bg-slate-900 px-3 py-1 text-sm font-semibold text-white hover:bg-slate-700"
                 >
                   Like
                 </button>
+                </div>
               </div>
             </article>
           ))}
         </div>
       )}
 
-      <PostModal isOpen={showModal} onClose={() => setShowModal(false)} onSubmit={handleCreate} />
+      {showModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/65 px-4">
+          <div className="w-full max-w-xl rounded-3xl bg-white p-6 shadow-2xl">
+            <CreateCityPost
+              userId={user?.id}
+              onSuccess={() => {
+                setShowModal(false)
+                fetchFeed()
+              }}
+              onCancel={() => setShowModal(false)}
+            />
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }

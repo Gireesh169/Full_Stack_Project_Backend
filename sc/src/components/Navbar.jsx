@@ -1,4 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom'
+import NotificationBell from './NotificationBell'
 import { useAuth } from '../context/AuthContext'
 
 const navClass = ({ isActive }) =>
@@ -42,12 +43,15 @@ const Navbar = () => {
             Logout
           </button>
         </div>
-        <div className="flex items-center gap-3 rounded-2xl border border-indigo-100/50 bg-indigo-50/80 px-5 py-2.5 text-sm font-extrabold text-indigo-800 shadow-sm">
+        <div className="flex items-center gap-3">
+          <NotificationBell user={user} />
+          <div className="flex items-center gap-3 rounded-2xl border border-indigo-100/50 bg-indigo-50/80 px-5 py-2.5 text-sm font-extrabold text-indigo-800 shadow-sm">
           <span className="relative flex h-2.5 w-2.5">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75"></span>
             <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-indigo-500"></span>
           </span>
           {user?.name ?? 'Guest'}
+          </div>
         </div>
       </div>
     </header>

@@ -21,7 +21,7 @@ export default function MapComponent() {
 
   const fetchLocations = async () => {
     try {
-      const res = await axios.get("http://localhost:8080/api/locations");
+      const res = await axios.get("http://localhost:8086/api/locations");
       setLocations(res.data);
     } catch (err) {
       console.error(err);

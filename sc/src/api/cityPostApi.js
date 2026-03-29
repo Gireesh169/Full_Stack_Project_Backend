@@ -1,6 +1,7 @@
 import api from './axiosConfig'
 
 export const createPost = (userId, payload) => api.post(`/posts/create/${userId}`, payload)
+export const createPostMultipart = (userId, formData) => api.post(`/posts/create/${userId}`, formData)
 export const getAllPosts = () => api.get('/posts/all')
 export const getPostsFeed = () => api.get('/posts/feed')
 export const getPostById = (id) => api.get(`/posts/${id}`)

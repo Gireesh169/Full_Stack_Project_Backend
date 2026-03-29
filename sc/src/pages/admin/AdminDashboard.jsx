@@ -9,7 +9,9 @@ import { getAllPosts } from '../../api/cityPostApi'
 import { deleteTask, getAllTasks, postTaskAssignment, updateTaskStatus } from '../../api/taskApi'
 import { getAllUsers, deleteUser } from '../../api/userApi'
 import { addWeather, deleteWeather, getAllWeather } from '../../api/weatherApi'
+import { AdminCategoryPie, AdminMonthlyTrendLine } from '../../components/charts/DashboardCharts'
 import Loader from '../../components/Loader'
+import MapComponent from '../../components/MapComponent'
 import { useAuth } from '../../context/AuthContext'
 import { formatDateTime } from '../../utils/date'
 
@@ -54,7 +56,6 @@ const AdminDashboard = () => {
     rating: '',
   })
   const [taskForm, setTaskForm] = useState({ complaintId: '', employeeId: '' })
-  const [locationForm, setLocationForm] = useState({ latitude: '', longitude: '', type: 'flood' })
 
   const fetchAllData = async () => {
     setLoading(true)
@@ -108,6 +109,44 @@ const AdminDashboard = () => {
     [complaints.length, employees.length, tasks.length, posts.length],
   )
 
+  const categoryChartData = useMemo(() => {
+    const counts = complaints.reduce((acc, item) => {
+      const raw = item.category ?? item.type ?? item.issueType ?? item.complaintType ?? 'Other'
+      const key = String(raw).trim() || 'Other'
+      acc[key] = (acc[key] ?? 0) + 1
+      return acc
+    }, {})
+
+    return Object.entries(counts).map(([name, value]) => ({ name, value }))
+  }, [complaints])
+
+  const monthlyTrendData = useMemo(() => {
+    const monthCounts = new Map()
+
+    complaints.forEach((item) => {
+      const rawDate = item.createdAt ?? item.created_at ?? item.date ?? item.submittedAt ?? item.time
+      if (!rawDate) return
+
+      const date = new Date(rawDate)
+      if (Number.isNaN(date.getTime())) return
+
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+      monthCounts.set(monthKey, (monthCounts.get(monthKey) ?? 0) + 1)
+    })
+
+    return Array.from(monthCounts.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, count]) => {
+        const [year, monthNum] = month.split('-')
+        const label = new Date(Number(year), Number(monthNum) - 1, 1).toLocaleString('en-US', {
+          month: 'short',
+          year: '2-digit',
+        })
+
+        return { month: label, count }
+      })
+  }, [complaints])
+
   const employeeUsers = useMemo(
     () => users.filter((item) => item.role === 'EMPLOYEE'),
     [users],
@@ -130,27 +169,20 @@ const AdminDashboard = () => {
     }
   }
 
-  const handleLocationSubmit = async (event) => {
-    event.preventDefault()
-
-    const latitude = Number(locationForm.latitude)
-    const longitude = Number(locationForm.longitude)
-
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-      toast.error('Latitude and longitude must be valid numbers')
-      return
-    }
-
+  // NEW: Handle location selection from map
+  const handleLocationSelect = async (location) => {
     try {
-      await axios.post('http://localhost:8080/api/locations', {
-        latitude,
-        longitude,
-        type: locationForm.type,
+      await axios.post('http://localhost:8086/api/locations', {
+        lat: location.lat,
+        lng: location.lng,
+        latitude: location.lat,
+        longitude: location.lng,
+        type: location.type,
       })
-      toast.success('Location submitted')
-      setLocationForm({ latitude: '', longitude: '', type: 'flood' })
+      toast.success('Location added to map')
+      await fetchAllData()
     } catch {
-      toast.error('Failed to submit location')
+      throw new Error('Failed to add location')
     }
   }
 
@@ -183,45 +215,18 @@ const AdminDashboard = () => {
                   ))}
                 </div>
 
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <AdminCategoryPie data={categoryChartData} />
+                  <AdminMonthlyTrendLine data={monthlyTrendData} />
+                </div>
+
                 <section>
-                  <h3 className="mb-3 text-lg font-bold text-slate-900">Add Map Location</h3>
-                  <form
-                    onSubmit={handleLocationSubmit}
-                    className="mb-6 grid gap-3 rounded-2xl border border-slate-200 p-4 md:grid-cols-4"
-                  >
-                    <input
-                      type="number"
-                      step="any"
-                      placeholder="Latitude"
-                      value={locationForm.latitude}
-                      onChange={(e) => setLocationForm((prev) => ({ ...prev, latitude: e.target.value }))}
-                      className="rounded-xl border border-slate-300 px-3 py-2"
-                      required
-                    />
-                    <input
-                      type="number"
-                      step="any"
-                      placeholder="Longitude"
-                      value={locationForm.longitude}
-                      onChange={(e) => setLocationForm((prev) => ({ ...prev, longitude: e.target.value }))}
-                      className="rounded-xl border border-slate-300 px-3 py-2"
-                      required
-                    />
-                    <select
-                      value={locationForm.type}
-                      onChange={(e) => setLocationForm((prev) => ({ ...prev, type: e.target.value }))}
-                      className="rounded-xl border border-slate-300 px-3 py-2"
-                      required
-                    >
-                      <option value="flood">flood</option>
-                      <option value="fire">fire</option>
-                      <option value="accident">accident</option>
-                      <option value="safe">safe</option>
-                    </select>
-                    <button type="submit" className="rounded-xl bg-teal-600 px-4 py-2 font-semibold text-white">
-                      Submit Location
-                    </button>
-                  </form>
+                  <div className="mb-6">
+                    <h3 className="mb-3 text-lg font-bold text-slate-900">Click on Map to Add Location</h3>
+                    <div className="rounded-2xl border border-slate-200 p-4">
+                      <MapComponent isAdminMode={true} onLocationSelect={handleLocationSelect} />
+                    </div>
+                  </div>
 
                   <h3 className="mb-3 text-lg font-bold text-slate-900">Recent Complaints</h3>
                   <div className="overflow-x-auto">

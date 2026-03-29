@@ -23,7 +23,6 @@ const Traffic = () => {
       setLoading(false)
     }
   }
-
   useEffect(() => {
     fetchRoadPosts()
   }, [])

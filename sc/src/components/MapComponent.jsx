@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import axios from 'axios'
 import L from 'leaflet'
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
+import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import { toast } from 'react-toastify'
 import 'leaflet/dist/leaflet.css'
+import 'leaflet-routing-machine'
+import 'leaflet-routing-machine/dist/leaflet-routing-machine.css'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
 
-// Fix for default marker icons in Leaflet
+const defaultCenter = [20.5937, 78.9629]
+
 const defaultIcon = L.icon({
   iconUrl: markerIcon,
   shadowUrl: markerShadow,
@@ -17,11 +20,6 @@ const defaultIcon = L.icon({
   shadowSize: [41, 41],
 })
 
-L.Marker.prototype.setIcon(defaultIcon)
-
-const defaultCenter = [20.5937, 78.9629]
-
-// Custom icon for user location (blue)
 const userLocationIcon = L.icon({
   iconUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0Ij48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSI4IiBmaWxsPSIjMzY4N2Y1IiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iMiIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjMiIGZpbGw9IiNmZmYiLz48L3N2Zz4=',
   iconSize: [32, 32],
@@ -29,76 +27,191 @@ const userLocationIcon = L.icon({
   popupAnchor: [0, -16],
 })
 
-const MapComponent = () => {
-  const [locations, setLocations] = useState([])
-  const [loadingLocations, setLoadingLocations] = useState(true)
-  // NEW: User location state
-  const [userLocation, setUserLocation] = useState(null)
-  const [watchId, setWatchId] = useState(null)
+L.Marker.prototype.setIcon(defaultIcon)
 
-  const fetchLocations = async () => {
-    setLoadingLocations(true)
-    try {
-      const { data } = await axios.get('http://localhost:8080/api/locations')
-      setLocations(Array.isArray(data) ? data : [])
-    } catch {
-      toast.error('Failed to load map locations')
-      setLocations([])
-    } finally {
-      setLoadingLocations(false)
-    }
-  }
+const DestinationClickHandler = ({ onDestinationSelect }) => {
+  useMapEvents({
+    click: (event) => {
+      onDestinationSelect({ lat: event.latlng.lat, lng: event.latlng.lng })
+    },
+  })
+  return null
+}
 
-  // NEW: Initialize geolocation on component mount
+const FollowUserLocation = ({ userLocation }) => {
+  const map = useMap()
+
   useEffect(() => {
-    fetchLocations()
+    if (!userLocation) return
+    map.setView([userLocation.lat, userLocation.lng])
+  }, [map, userLocation])
 
-    // Request user's current location with real-time tracking
-    if (navigator.geolocation) {
-      const id = navigator.geolocation.watchPosition(
-        (position) => {
-          const { latitude, longitude, accuracy } = position.coords
-          setUserLocation({ lat: latitude, lng: longitude, accuracy })
-        },
-        (error) => {
-          console.warn('Geolocation error:', error.message)
-          if (error.code === error.PERMISSION_DENIED) {
-            console.log('Location permission denied by user')
-          }
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0,
-        },
-      )
-      setWatchId(id)
+  return null
+}
 
-      // Cleanup function: stop watching position on unmount
-      return () => {
-        if (id) navigator.geolocation.clearWatch(id)
+const RouteLayer = ({ userLocation, destination }) => {
+  const map = useMap()
+  const routingControlRef = useRef(null)
+  const hasErrorNotifiedRef = useRef(false)
+
+  useEffect(() => {
+    if (routingControlRef.current) {
+      map.removeControl(routingControlRef.current)
+      routingControlRef.current = null
+    }
+
+    if (!userLocation || !destination) return
+
+    if (!L.Routing || !L.Routing.control) {
+      console.log('Leaflet Routing Machine is not available')
+      return
+    }
+
+    const serviceUrls = [
+      'https://router.project-osrm.org/route/v1',
+      'https://routing.openstreetmap.de/routed-car/route/v1',
+    ]
+
+    const createRoutingControl = (serviceUrl) =>
+      L.Routing.control({
+        waypoints: [L.latLng(userLocation.lat, userLocation.lng), L.latLng(destination.lat, destination.lng)],
+        router: L.Routing.osrmv1({ serviceUrl, profile: 'driving' }),
+        routeWhileDragging: false,
+        addWaypoints: false,
+        draggableWaypoints: false,
+        fitSelectedRoutes: true,
+        show: false,
+        lineOptions: {
+          styles: [{ color: '#0f766e', opacity: 0.9, weight: 5 }],
+        },
+        createMarker: () => null,
+      }).addTo(map)
+
+    let serviceIndex = 0
+    const attachHandlers = () => {
+      if (!routingControlRef.current) return
+
+      routingControlRef.current.on('routesfound', (event) => {
+        console.log('Route found:', event.routes?.[0]?.summary)
+        hasErrorNotifiedRef.current = false
+      })
+
+      routingControlRef.current.on('routingerror', (event) => {
+        console.log('Routing error:', event.error)
+
+        if (routingControlRef.current) {
+          map.removeControl(routingControlRef.current)
+          routingControlRef.current = null
+        }
+
+        serviceIndex += 1
+        if (serviceIndex < serviceUrls.length) {
+          routingControlRef.current = createRoutingControl(serviceUrls[serviceIndex])
+          attachHandlers()
+          return
+        }
+
+        if (!hasErrorNotifiedRef.current) {
+          toast.error('Unable to draw road route right now. Try again in a moment.')
+          hasErrorNotifiedRef.current = true
+        }
+      })
+    }
+
+    routingControlRef.current = createRoutingControl(serviceUrls[serviceIndex])
+    attachHandlers()
+
+    return () => {
+      if (routingControlRef.current) {
+        map.removeControl(routingControlRef.current)
+        routingControlRef.current = null
       }
     }
+  }, [map, userLocation, destination])
+
+  return null
+}
+
+const MapComponent = ({ destination = null }) => {
+  const [locations, setLocations] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [userLocation, setUserLocation] = useState(null)
+  const [clickedDestination, setClickedDestination] = useState(null)
+
+  useEffect(() => {
+    const fetchLocations = async () => {
+      setLoading(true)
+      try {
+        const { data } = await axios.get('http://localhost:8086/api/locations')
+        setLocations(Array.isArray(data) ? data : [])
+      } catch {
+        toast.error('Failed to load map locations')
+        setLocations([])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchLocations()
+  }, [])
+
+  useEffect(() => {
+    if (!navigator.geolocation) return
+
+    const id = navigator.geolocation.watchPosition(
+      (position) => {
+        const { latitude, longitude, accuracy } = position.coords
+        setUserLocation({ lat: latitude, lng: longitude, accuracy })
+      },
+      (error) => {
+        if (error.code === error.PERMISSION_DENIED) {
+          console.log('Location permission denied by user')
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      },
+    )
+
+    return () => navigator.geolocation.clearWatch(id)
   }, [])
 
   const center = useMemo(() => {
-    // NEW: Prioritize user location if available
-    if (userLocation) {
-      return [userLocation.lat, userLocation.lng]
+    if (userLocation) return [userLocation.lat, userLocation.lng]
+    return defaultCenter
+  }, [userLocation])
+
+  const activeDestination = useMemo(() => {
+    if (
+      destination &&
+      Number.isFinite(Number(destination.lat)) &&
+      Number.isFinite(Number(destination.lng))
+    ) {
+      return { lat: Number(destination.lat), lng: Number(destination.lng) }
     }
 
-    const first = locations[0]
-    if (!first) return defaultCenter
+    if (
+      clickedDestination &&
+      Number.isFinite(Number(clickedDestination.lat)) &&
+      Number.isFinite(Number(clickedDestination.lng))
+    ) {
+      return { lat: Number(clickedDestination.lat), lng: Number(clickedDestination.lng) }
+    }
 
-    const lat = Number(first.latitude ?? first.lat ?? defaultCenter[0])
-    const lng = Number(first.longitude ?? first.lng ?? defaultCenter[1])
+    return null
+  }, [destination, clickedDestination])
 
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return defaultCenter
+  const routeStart = useMemo(() => {
+    if (!userLocation) return null
+    return {
+      lat: Number(userLocation.lat.toFixed(4)),
+      lng: Number(userLocation.lng.toFixed(4)),
+    }
+  }, [userLocation])
 
-    return [lat, lng]
-  }, [userLocation, locations])
-
-  if (loadingLocations) {
+  if (loading) {
     return (
       <div className="flex h-[420px] items-center justify-center rounded-2xl border border-slate-200 bg-white/50 text-sm font-semibold text-slate-600">
         Loading map...
@@ -112,39 +225,22 @@ const MapComponent = () => {
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      {/* NEW: Marker for user's current location */}
-      {userLocation && (
-        <Marker position={[userLocation.lat, userLocation.lng]} icon={userLocationIcon}>
-          <Popup>
-            <div className="text-sm">
-              <p className="font-semibold text-blue-600">📍 You are here</p>
-              <p className="text-xs text-slate-600">Lat: {userLocation.lat.toFixed(4)}</p>
-              <p className="text-xs text-slate-600">Lng: {userLocation.lng.toFixed(4)}</p>
-              <p className="text-xs text-slate-500">Accuracy: ±{Math.round(userLocation.accuracy)}m</p>
-            </div>
-          </Popup>
-        </Marker>
-      )}
-      {/* Existing: Markers for backend locations */}
+
+      <DestinationClickHandler onDestinationSelect={setClickedDestination} />
+      <FollowUserLocation userLocation={userLocation} />
+      <RouteLayer userLocation={routeStart} destination={activeDestination} />
+
+      {userLocation && <Marker position={[userLocation.lat, userLocation.lng]} icon={userLocationIcon} />}
+
+      {activeDestination && <Marker position={[activeDestination.lat, activeDestination.lng]} />}
+
       {locations.map((location, index) => {
         const lat = Number(location.latitude ?? location.lat)
         const lng = Number(location.longitude ?? location.lng)
 
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
 
-        const type = String(location.type ?? '').toLowerCase()
-
-        return (
-          <Marker key={location.id ?? `${lat}-${lng}-${index}`} position={[lat, lng]}>
-            <Popup>
-              <div className="text-sm">
-                <p className="font-semibold text-slate-900">Type: {type}</p>
-                <p className="text-xs text-slate-600">Lat: {lat.toFixed(4)}</p>
-                <p className="text-xs text-slate-600">Lng: {lng.toFixed(4)}</p>
-              </div>
-            </Popup>
-          </Marker>
-        )
+        return <Marker key={location.id ?? `${lat}-${lng}-${index}`} position={[lat, lng]} />
       })}
     </MapContainer>
   )

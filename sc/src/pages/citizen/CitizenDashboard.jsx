@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'react-toastify'
 import { getAllCityInfo } from '../../api/cityInfoApi'
-import { getAllComplaints, postComplaint } from '../../api/complaintsApi'
+import { getAllComplaints } from '../../api/complaintsApi'
 import { getPostsFeed } from '../../api/cityPostApi'
 import Loader from '../../components/Loader'
 import MapComponent from '../../components/MapComponent'
+import SubmitComplaint from '../../components/SubmitComplaint'
+import { CitizenComplaintStatusPie } from '../../components/charts/DashboardCharts'
 import { useAuth } from '../../context/AuthContext'
 import { formatDateTime } from '../../utils/date'
 import { STATUS_STYLES } from '../../utils/constants'
@@ -19,7 +21,45 @@ const CitizenDashboard = () => {
   const [complaints, setComplaints] = useState([])
   const [cityInfo, setCityInfo] = useState([])
   const [posts, setPosts] = useState([])
-  const [form, setForm] = useState({ title: '', description: '', place: '', imageUrl: '' })
+  const [destinationInput, setDestinationInput] = useState('')
+  const [destinationCoords, setDestinationCoords] = useState(null)
+  const [routeLoading, setRouteLoading] = useState(false)
+
+  const parseLatLngInput = (value) => {
+    const matched = value.trim().match(/^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/)
+    if (!matched) return null
+
+    const lat = Number(matched[1])
+    const lng = Number(matched[2])
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null
+
+    return { lat, lng }
+  }
+
+  const resolveDestination = async (query) => {
+    const directCoords = parseLatLngInput(query)
+    if (directCoords) return directCoords
+
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`,
+    )
+
+    if (!response.ok) {
+      throw new Error('Geocoding request failed')
+    }
+
+    const result = await response.json()
+    if (!Array.isArray(result) || result.length === 0) {
+      throw new Error('Destination not found')
+    }
+
+    return {
+      lat: Number(result[0].lat),
+      lng: Number(result[0].lon),
+    }
+  }
 
   const fetchData = async () => {
     setLoading(true)
@@ -43,23 +83,61 @@ const CitizenDashboard = () => {
     fetchData()
   }, [])
 
-  const handleSubmitComplaint = async (event) => {
+  const handleComplaintSuccess = () => {
+    toast.success('Complaint submitted successfully')
+    fetchData()
+    setActiveTab('My Complaints')
+  }
+
+  const handleRouteSubmit = async (event) => {
     event.preventDefault()
-    try {
-      await postComplaint({ ...form, status: 'PENDING' })
-      toast.success('Complaint submitted successfully')
-      setForm({ title: '', description: '', place: '', imageUrl: '' })
-      fetchData()
-      setActiveTab('My Complaints')
-    } catch {
-      toast.error('Failed to submit complaint')
+
+    const query = destinationInput.trim()
+    if (!query) {
+      toast.error('Enter a destination or coordinates')
+      return
     }
+
+    setRouteLoading(true)
+    try {
+      const coords = await resolveDestination(query)
+      setDestinationCoords(coords)
+      toast.success('Route updated')
+    } catch {
+      toast.error('Unable to resolve destination')
+    } finally {
+      setRouteLoading(false)
+    }
+  }
+
+  const clearRoute = () => {
+    setDestinationInput('')
+    setDestinationCoords(null)
   }
 
   const latestPosts = useMemo(
     () => [...posts].sort((a, b) => new Date(b.postedAt) - new Date(a.postedAt)).slice(0, 5),
     [posts],
   )
+
+  const statusChartData = useMemo(() => {
+    const counts = {
+      PENDING: 0,
+      IN_PROGRESS: 0,
+      RESOLVED: 0,
+    }
+
+    complaints.forEach((item) => {
+      const status = String(item.status ?? '').toUpperCase()
+      if (counts[status] !== undefined) counts[status] += 1
+    })
+
+    return [
+      { name: 'Pending', value: counts.PENDING },
+      { name: 'In Progress', value: counts.IN_PROGRESS },
+      { name: 'Resolved', value: counts.RESOLVED },
+    ]
+  }, [complaints])
 
   const sidebarClass = (tab) =>
     `w-full rounded-2xl px-4 py-3 text-left text-sm font-bold transition-all ${
@@ -112,51 +190,41 @@ const CitizenDashboard = () => {
                     </div>
                   </div>
                 </div>
+                <CitizenComplaintStatusPie data={statusChartData} />
                 <div className="space-y-3 rounded-3xl border border-white/50 bg-white/40 p-5 shadow-sm backdrop-blur-md">
                   <div>
                     <h3 className="text-lg font-bold text-slate-900">City Safety Map</h3>
                     <p className="text-sm text-slate-600">Live location markers from the city control backend.</p>
                   </div>
-                  <MapComponent />
+                  <form onSubmit={handleRouteSubmit} className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
+                    <input
+                      value={destinationInput}
+                      onChange={(e) => setDestinationInput(e.target.value)}
+                      placeholder="Enter destination name or lat,lng (e.g. 17.385, 78.487)"
+                      className="rounded-xl border border-slate-300 px-4 py-2 text-sm"
+                    />
+                    <button
+                      type="submit"
+                      disabled={routeLoading}
+                      className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                    >
+                      {routeLoading ? 'Routing...' : 'Show Route'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearRoute}
+                      className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700"
+                    >
+                      Clear
+                    </button>
+                  </form>
+                  <MapComponent destination={destinationCoords} />
                 </div>
               </div>
             )}
 
             {activeTab === 'Submit Complaint' && (
-              <form onSubmit={handleSubmitComplaint} className="grid gap-3">
-                <h3 className="text-xl font-bold text-slate-900">Submit Complaint</h3>
-                <input
-                  placeholder="Title"
-                  value={form.title}
-                  onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
-                  className="rounded-xl border border-slate-300 px-4 py-2"
-                  required
-                />
-                <textarea
-                  placeholder="Description"
-                  value={form.description}
-                  onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
-                  className="rounded-xl border border-slate-300 px-4 py-2"
-                  rows={4}
-                  required
-                />
-                <input
-                  placeholder="Place"
-                  value={form.place}
-                  onChange={(e) => setForm((prev) => ({ ...prev, place: e.target.value }))}
-                  className="rounded-xl border border-slate-300 px-4 py-2"
-                  required
-                />
-                <input
-                  placeholder="Image URL"
-                  value={form.imageUrl}
-                  onChange={(e) => setForm((prev) => ({ ...prev, imageUrl: e.target.value }))}
-                  className="rounded-xl border border-slate-300 px-4 py-2"
-                />
-                <button type="submit" className="rounded-xl bg-teal-600 px-4 py-2 font-semibold text-white">
-                  Submit Complaint
-                </button>
-              </form>
+              <SubmitComplaint onSuccess={handleComplaintSuccess} />
             )}
 
             {activeTab === 'My Complaints' && (

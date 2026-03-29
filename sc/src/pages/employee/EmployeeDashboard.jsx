@@ -1,9 +1,10 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import axios from 'axios'
 import { toast } from 'react-toastify'
 import { getAllEmployees } from '../../api/employeeApi'
 import { getPerformanceByEmployeeId } from '../../api/performanceApi'
 import { getTasksByEmployee, updateTaskStatus } from '../../api/taskApi'
+import { EmployeeTaskBar } from '../../components/charts/DashboardCharts'
 import Loader from '../../components/Loader'
 import { useAuth } from '../../context/AuthContext'
 import { formatDateTime } from '../../utils/date'
@@ -91,7 +92,7 @@ const EmployeeDashboard = () => {
     }
 
     try {
-      await axios.post('http://localhost:8080/api/locations', {
+      await axios.post('http://localhost:8086/api/locations', {
         latitude,
         longitude,
         type: locationForm.type,
@@ -113,6 +114,15 @@ const EmployeeDashboard = () => {
   const realTotalAssigned = tasks.length
   const realTotalCompleted = tasks.filter((t) => t.status === 'RESOLVED').length
   const realRating = realTotalAssigned > 0 ? (realTotalCompleted / realTotalAssigned) * 5 : 0
+  const employeeTaskChartData = useMemo(() => {
+    const completed = tasks.filter((task) => task.status === 'RESOLVED').length
+    const pending = tasks.filter((task) => task.status === 'PENDING' || task.status === 'IN_PROGRESS').length
+
+    return [
+      { name: 'Completed', count: completed },
+      { name: 'Pending', count: pending },
+    ]
+  }, [tasks])
 
   return (
     <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:grid-cols-[260px_1fr] sm:px-6">
@@ -213,23 +223,26 @@ const EmployeeDashboard = () => {
             )}
 
             {activeTab === 'My Performance' && (
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200 p-4">
-                  <p className="text-sm text-slate-500">Total Assigned</p>
-                  <p className="text-3xl font-black text-slate-900">{realTotalAssigned}</p>
+              <div className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <p className="text-sm text-slate-500">Total Assigned</p>
+                    <p className="text-3xl font-black text-slate-900">{realTotalAssigned}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <p className="text-sm text-slate-500">Total Completed</p>
+                    <p className="text-3xl font-black text-slate-900">{realTotalCompleted}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <p className="text-sm text-slate-500">Average Resolution Time</p>
+                    <p className="text-2xl font-black text-slate-900">{performance?.averageResolutionTime ?? 'N/A'}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <p className="text-sm text-slate-500">Real-Time Rating</p>
+                    <p className="text-2xl font-black text-amber-500">{renderStars(realRating)}</p>
+                  </div>
                 </div>
-                <div className="rounded-2xl border border-slate-200 p-4">
-                  <p className="text-sm text-slate-500">Total Completed</p>
-                  <p className="text-3xl font-black text-slate-900">{realTotalCompleted}</p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 p-4">
-                  <p className="text-sm text-slate-500">Average Resolution Time</p>
-                  <p className="text-2xl font-black text-slate-900">{performance?.averageResolutionTime ?? 'N/A'}</p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 p-4">
-                  <p className="text-sm text-slate-500">Real-Time Rating</p>
-                  <p className="text-2xl font-black text-amber-500">{renderStars(realRating)}</p>
-                </div>
+                <EmployeeTaskBar data={employeeTaskChartData} />
               </div>
             )}
           </>
